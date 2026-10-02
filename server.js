@@ -7,9 +7,19 @@ const PORT = process.env.PORT || 8080, PERSIST = process.env.PERSIST_FILE, MAX_H
 const APP = fs.readFileSync(path.join(__dirname, 'public', 'index.html'));       // the chat app
 const LANDING = fs.readFileSync(path.join(__dirname, 'public', 'landing.html'));  // the marketing page
 const page = (res, html) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(html); };
+// Static assets for home-screen install (manifest + icons), loaded once at startup.
+const asset = (f, type) => ({ body: fs.readFileSync(path.join(__dirname, 'public', f)), type });
+const STATIC = {
+  '/manifest.webmanifest': asset('manifest.webmanifest', 'application/manifest+json'),
+  '/icon-512.png': asset('icon-512.png', 'image/png'),
+  '/icon-192.png': asset('icon-192.png', 'image/png'),
+  '/icon-180.png': asset('icon-180.png', 'image/png'),
+};
 const handler = (req, res) => {
   const url = (req.url || '/').split('?')[0];
   if (url === '/healthz') { res.writeHead(200); return res.end('ok'); }
+  const a = STATIC[url];
+  if (a) { res.writeHead(200, { 'content-type': a.type, 'cache-control': 'public, max-age=86400' }); return res.end(a.body); }
   if (url === '/app' || url.startsWith('/app/')) return page(res, APP); // the chat app
   return page(res, LANDING); // landing page at / and everywhere else
 };
