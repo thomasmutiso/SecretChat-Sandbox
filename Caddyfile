@@ -1,0 +1,5 @@
+# Put your real domain here. Caddy gets a free HTTPS certificate automatically,
+# so the browser can use wss:// (required for phones over the internet).
+chat.example.com {
+    reverse_proxy localhost:8080
+}

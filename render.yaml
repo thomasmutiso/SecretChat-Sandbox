@@ -1,0 +1,10 @@
+# Deploy on Render (free tier). Put this folder in a GitHub repo, then in Render:
+# New + > Blueprint > pick the repo. You get an https URL with secure wss built in.
+services:
+  - type: web
+    runtime: node
+    name: secretchat-sandbox
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /healthz
