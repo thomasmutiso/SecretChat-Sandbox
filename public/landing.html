@@ -20,6 +20,7 @@
 :root{--ink:#0C2418;--deep:#081912;--surf:#12301F;--bd:#274A31;--gold:#E7C25C;--goldd:#D7AE45;--text:#F1F6F0;--mut:#A9BEB0;--bubble:#2E7D5B;--recv:#12271B;--cream:#F3F0E6;--creamink:#15311F;--creammut:#5E6B5C}
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
+#how,#features,#download{scroll-margin-top:96px}
 body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--text);background:var(--ink);line-height:1.5}
 a{color:inherit;text-decoration:none}
 .wrap{max-width:1180px;margin:0 auto;padding:0 22px}
@@ -27,6 +28,14 @@ a{color:inherit;text-decoration:none}
 .btn-gold{background:linear-gradient(180deg,var(--gold),var(--goldd));color:#15310f}
 .btn-ghost{background:transparent;border:1.5px solid rgba(255,255,255,.35);color:#fff}
 .leaf{display:inline-block}
+.how{background:linear-gradient(180deg,#0A1F14,#0C2418);padding:60px 0;border-top:1px solid rgba(255,255,255,.05)}
+.how h2{font-size:30px;font-weight:800;letter-spacing:-.5px;text-align:center;margin-bottom:6px}
+.how .sub{color:var(--mut);text-align:center;margin-bottom:34px}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.step{background:var(--surf);border:1px solid var(--bd);border-radius:18px;padding:22px}
+.step .num{width:38px;height:38px;border-radius:50%;background:var(--gold);color:#15310f;font-weight:800;display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+.step h3{font-size:17px;margin-bottom:4px}.step p{color:var(--mut);font-size:14px}
+@media(max-width:760px){.steps{grid-template-columns:1fr}}
 .badge{display:inline-block;margin-left:10px;padding:3px 10px;border:1px solid var(--gold);border-radius:999px;color:var(--gold);font-size:11px;font-weight:700;letter-spacing:.06em;vertical-align:middle}
 .banner{background:var(--gold);color:#15310f;text-align:center;font-weight:700;font-size:13px;padding:7px 12px}
 /* nav */
@@ -173,6 +182,16 @@ footer{background:var(--deep);color:#9fb3a4;text-align:center;padding:30px 0;fon
   <div class="script">Your privacy.<br>Your choice.</div>
 </div></header>
 
+<section class="how" id="how"><div class="wrap">
+  <h2>How It Works</h2>
+  <div class="sub">Three steps. No sign-up, no phone number.</div>
+  <div class="steps">
+    <div class="step"><div class="num">1</div><h3>Pick a name</h3><p>Open the app and choose any ID or alias. It's claimed on your device — no account, no email.</p></div>
+    <div class="step"><div class="num">2</div><h3>Share it</h3><p>Tell a friend your ID. They pick their own and share theirs back.</p></div>
+    <div class="step"><div class="num">3</div><h3>Say it — then it's gone</h3><p>Messages are end-to-end encrypted. Once read and confirmed, they vanish from both phones and the server.</p></div>
+  </div>
+</div></section>
+
 <section class="why" id="features"><div class="wrap">
   <div class="why-grid">
     <div>
@@ -181,14 +200,13 @@ footer{background:var(--deep);color:#9fb3a4;text-align:center;padding:30px 0;fon
         <div class="snm">Secret<span>Chat</span></div>
         <div class="stag">Messages vanish. Privacy stays.</div>
         <a class="gs" href="/app">Get Started</a>
-        <div class="si">Already have an account? <b>Sign In</b></div>
         <div class="wave"></div>
       </div>
       <div class="caplabel">Mobile App (Android)</div>
       <div class="capsub">Clean. Simple. Secure.</div>
     </div>
 
-    <div id="how">
+    <div>
       <h2>Why Choose SecretChat?</h2>
       <div class="sub">Built for your privacy. Designed for your peace of mind.</div>
       <div class="feat">
