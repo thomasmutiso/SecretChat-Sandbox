@@ -6,6 +6,19 @@ const PORT = process.env.PORT || 8080, PERSIST = process.env.PERSIST_FILE, MAX_H
 
 const APP = fs.readFileSync(path.join(__dirname, 'public', 'index.html'));       // the chat app
 const LANDING = fs.readFileSync(path.join(__dirname, 'public', 'landing.html'));  // the marketing page
+const ADMIN = fs.readFileSync(path.join(__dirname, 'public', 'admin.html'));      // admin-only dashboard
+
+// Privacy-preserving analytics: COUNTS and timings only. Never message content, never who messaged whom, never ID names.
+const stats = { startedAt: Date.now(), totalConnections: 0, messagesRelayed: 0, reads: 0, peakOnline: 0 };
+const minuteBuf = []; // [{ t: minuteEpoch, msgs, reads }] for the last hour
+function bump(kind) {
+  const m = Math.floor(Date.now() / 60000);
+  let b = minuteBuf[minuteBuf.length - 1];
+  if (!b || b.t !== m) { b = { t: m, msgs: 0, reads: 0 }; minuteBuf.push(b); if (minuteBuf.length > 60) minuteBuf.shift(); }
+  b[kind]++;
+}
+function onlineCount() { let n = 0; for (const u of users.values()) if (u.ws && u.ws.readyState === 1) n++; return n; }
+function heldCount() { let n = 0; for (const q of held.values()) n += q.length; return n; }
 const page = (res, html) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(html); };
 // Static assets for home-screen install (manifest + icons), loaded once at startup.
 const asset = (f, type) => ({ body: fs.readFileSync(path.join(__dirname, 'public', f)), type });
@@ -18,6 +31,15 @@ const STATIC = {
 const handler = (req, res) => {
   const url = (req.url || '/').split('?')[0];
   if (url === '/healthz') { res.writeHead(200); return res.end('ok'); }
+  if (url === '/admin') return page(res, ADMIN);
+  if (url === '/admin/stats') {
+    if (!process.env.ADMIN_KEY) { res.writeHead(403, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: 'admin not configured' })); }
+    if ((req.headers['x-admin-key'] || '') !== process.env.ADMIN_KEY) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: 'unauthorized' })); }
+    const body = { onlineNow: onlineCount(), claimedIds: users.size, held: heldCount(),
+      messagesRelayed: stats.messagesRelayed, reads: stats.reads, totalConnections: stats.totalConnections,
+      peakOnline: stats.peakOnline, uptimeSec: Math.floor((Date.now() - stats.startedAt) / 1000), series: minuteBuf.slice(-30) };
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(JSON.stringify(body));
+  }
   const a = STATIC[url];
   if (a) { res.writeHead(200, { 'content-type': a.type, 'cache-control': 'public, max-age=86400' }); return res.end(a.body); }
   if (url === '/app' || url.startsWith('/app/')) return page(res, APP); // the chat app
@@ -55,6 +77,7 @@ const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const notify = id => { const n = (held.get(id) || []).length; for (const w of watchers.get(id) || []) send(w, { t: 'count', n }); };
 
 wss.on('connection', ws => {
+  stats.totalConnections++;
   let me = null, watching = null, hits = 0;
   const rl = setInterval(() => (hits = 0), 10000);
   ws.on('message', raw => {
@@ -78,6 +101,7 @@ wss.on('connection', ws => {
       users.set(id, { ws, pub: m.pub, th: sha(tok) });
       if (changed) save();
       for (const f of held.get(id) || []) send(ws, f);
+      { const o = onlineCount(); if (o > stats.peakOnline) stats.peakOnline = o; }
     } else if (!me) {
       return send(ws, { t: 'err', reason: 'not authenticated' });
     } else if (m.t === 'getpub') {
@@ -88,6 +112,7 @@ wss.on('connection', ws => {
       if (q.length >= MAX_HELD) return send(ws, { t: 'err', reason: 'recipient mailbox full' });
       const frame = { t: 'msg', msgId: m.msgId, eph: m.eph, ct: m.ct }; // sealed sender: no 'from'
       q.push(frame); held.set(m.to, q); save();
+      stats.messagesRelayed++; bump('msgs');
       const u = users.get(m.to);
       if (u && u.ws && u.ws.readyState === 1) send(u.ws, frame);
       notify(m.to);
@@ -96,6 +121,7 @@ wss.on('connection', ws => {
     } else if (m.t === 'read') {
       const q = (held.get(me) || []).filter(f => f.msgId !== m.msgId);
       q.length ? held.set(me, q) : held.delete(me); save();
+      stats.reads++; bump('reads');
       notify(me);
       if (m.box) { send(boxes.get(String(m.box)), { t: 'read', msgId: m.msgId }); boxes.delete(String(m.box)); }
     }
