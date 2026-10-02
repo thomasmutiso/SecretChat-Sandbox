@@ -2,7 +2,7 @@
   "name": "SecretChat",
   "short_name": "SecretChat",
   "description": "Messages vanish. Privacy stays.",
-  "start_url": "/app",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
