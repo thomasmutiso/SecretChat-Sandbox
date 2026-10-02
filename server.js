@@ -4,11 +4,14 @@ const fs = require('fs'), http = require('http'), https = require('https'), cryp
 const { WebSocketServer } = require('ws');
 const PORT = process.env.PORT || 8080, PERSIST = process.env.PERSIST_FILE, MAX_HELD = 1000;
 
-const CLIENT = fs.readFileSync(path.join(__dirname, 'public', 'index.html'));
+const APP = fs.readFileSync(path.join(__dirname, 'public', 'index.html'));       // the chat app
+const LANDING = fs.readFileSync(path.join(__dirname, 'public', 'landing.html'));  // the marketing page
+const page = (res, html) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(html); };
 const handler = (req, res) => {
-  if (req.url === '/healthz') { res.writeHead(200); return res.end('ok'); }
-  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(CLIENT); // every path serves the single-page client
+  const url = (req.url || '/').split('?')[0];
+  if (url === '/healthz') { res.writeHead(200); return res.end('ok'); }
+  if (url === '/app' || url.startsWith('/app/')) return page(res, APP); // the chat app
+  return page(res, LANDING); // landing page at / and everywhere else
 };
 const srv = process.env.TLS_CERT && process.env.TLS_KEY
   ? https.createServer({ cert: fs.readFileSync(process.env.TLS_CERT), key: fs.readFileSync(process.env.TLS_KEY) }, handler)
