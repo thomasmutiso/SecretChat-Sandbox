@@ -143,22 +143,31 @@ async function open(m){
     const o=JSON.parse(decd.decode(await unseal(await dh(kp.privateKey,m.eph),m.ct)));
     const sp=await pubOf(o.from);
     const text=decd.decode(await unseal(await dh(kp.privateKey,sp),o.inner));
-    m.from=o.from;m.box=o.box;m.plain=text;renderInbox();
-  }catch(e){m.plain='⚠ Could not open this message';renderInbox()}
+    m.from=o.from;m.box=o.box;m.plain=text;m.opened=true;
+    // Read once: delete the server copy the instant it is opened (and send the read receipt).
+    m.readSent=tx({t:'read',msgId:m.msgId,box:m.box||''});
+    m._t=setTimeout(()=>wipe(m),45000); // backstop: clear from the screen after 45s
+    renderInbox();
+  }catch(e){m.plain='⚠ Could not open this message';m.opened=false;renderInbox()}
 }
-function confirmRead(m){
-  if(!tx({t:'read',msgId:m.msgId,box:m.box||''}))return;
+function wipe(m){
+  if(m._t){clearTimeout(m._t);m._t=null;}
+  if(m.opened&&!m.readSent)m.readSent=tx({t:'read',msgId:m.msgId,box:m.box||''}); // ensure the server copy is gone
   inbox=inbox.filter(x=>x!==m);renderInbox();
 }
+function wipeAllOpened(){inbox.filter(m=>m.opened).slice().forEach(wipe);} // clear on exit
 function renderInbox(){
   const el=$('inbox');
   if(!inbox.length){el.innerHTML='<div class="mut">No messages waiting.</div>';return}
   el.innerHTML='';
   inbox.forEach(m=>{
     const c=document.createElement('div');c.className='card';
-    if(m.plain!=null){
-      c.innerHTML='<div class="mut">From '+(m.from||'')+'</div><div class="bubble">'+escapeHtml(m.plain)+'</div><div class="mut">Confirming erases it here and on the relay.</div>';
-      const b=document.createElement('button');b.textContent='Confirm read & erase';b.onclick=()=>confirmRead(m);c.appendChild(b);
+    if(m.opened){
+      c.innerHTML='<div class="mut">From '+(m.from||'')+'</div><div class="bubble">'+escapeHtml(m.plain)+'</div><div class="mut">Already erased from the server. Clears here when you leave, or after 45s.</div>';
+      const b=document.createElement('button');b.textContent='Delete now';b.onclick=()=>wipe(m);c.appendChild(b);
+    }else if(m.plain!=null){
+      c.innerHTML='<div class="bubble">'+escapeHtml(m.plain)+'</div>';
+      const b=document.createElement('button');b.className='soft';b.textContent='Try again';b.style.marginTop='10px';b.onclick=()=>open(m);c.appendChild(b);
     }else{
       c.innerHTML='<div class="row"><div><b>Private message</b><div class="mut">Encrypted · held until you open</div></div></div>';
       const b=document.createElement('button');b.className='soft';b.textContent='Open';b.style.marginTop='10px';b.onclick=()=>open(m);c.appendChild(b);
@@ -176,6 +185,8 @@ $('join').onclick=()=>join($('me').value);
 $('me').onkeydown=e=>{if(e.key==='Enter')join($('me').value)};
 $('send').onclick=send;
 $('leave').onclick=()=>{try{ws&&ws.close()}catch(e){}inbox=[];sent=[];location.reload()};
+document.addEventListener('visibilitychange',()=>{if(document.hidden)wipeAllOpened();});
+window.addEventListener('pagehide',wipeAllOpened);
 const [sid]=load();if(sid)$('me').value=sid;
 </script>
   <div id="a2hs" style="display:none;position:fixed;left:14px;right:14px;bottom:14px;max-width:440px;margin:0 auto;background:var(--surf);border:1px solid var(--bd);border-radius:16px;padding:13px 14px;align-items:center;gap:12px;box-shadow:0 12px 34px rgba(0,0,0,.45);z-index:50">
