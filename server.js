@@ -11,14 +11,24 @@ const ADMIN = fs.readFileSync(path.join(__dirname, 'public', 'admin.html'));    
 // Privacy-preserving analytics: COUNTS and timings only. Never message content, never who messaged whom, never ID names.
 const stats = { startedAt: Date.now(), totalConnections: 0, messagesRelayed: 0, reads: 0, peakOnline: 0 };
 const minuteBuf = []; // [{ t: minuteEpoch, msgs, reads }] for the last hour
+const hourBuf = [];  // [{ t: hourEpoch, msgs, reads }] for the last ~2 days
 function bump(kind) {
-  const m = Math.floor(Date.now() / 60000);
+  const now = Date.now();
+  const m = Math.floor(now / 60000);
   let b = minuteBuf[minuteBuf.length - 1];
   if (!b || b.t !== m) { b = { t: m, msgs: 0, reads: 0 }; minuteBuf.push(b); if (minuteBuf.length > 60) minuteBuf.shift(); }
   b[kind]++;
+  const h = Math.floor(now / 3600000);
+  let hb = hourBuf[hourBuf.length - 1];
+  if (!hb || hb.t !== h) { hb = { t: h, msgs: 0, reads: 0 }; hourBuf.push(hb); if (hourBuf.length > 48) hourBuf.shift(); }
+  hb[kind]++;
 }
 function onlineCount() { let n = 0; for (const u of users.values()) if (u.ws && u.ws.readyState === 1) n++; return n; }
 function heldCount() { let n = 0; for (const q of held.values()) n += q.length; return n; }
+
+// Anonymous feedback: rating 1-5 + optional comment. Never linked to a user ID.
+const feedback = [];
+const fbAgg = { count: 0, sum: 0, hist: [0, 0, 0, 0, 0] };
 const page = (res, html) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(html); };
 // Static assets for home-screen install (manifest + icons), loaded once at startup.
 const asset = (f, type) => ({ body: fs.readFileSync(path.join(__dirname, 'public', f)), type });
@@ -37,7 +47,9 @@ const handler = (req, res) => {
     if ((req.headers['x-admin-key'] || '') !== process.env.ADMIN_KEY) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: 'unauthorized' })); }
     const body = { onlineNow: onlineCount(), claimedIds: users.size, held: heldCount(),
       messagesRelayed: stats.messagesRelayed, reads: stats.reads, totalConnections: stats.totalConnections,
-      peakOnline: stats.peakOnline, uptimeSec: Math.floor((Date.now() - stats.startedAt) / 1000), series: minuteBuf.slice(-30) };
+      peakOnline: stats.peakOnline, uptimeSec: Math.floor((Date.now() - stats.startedAt) / 1000), series: minuteBuf.slice(-30), seriesHour: hourBuf.slice(-24),
+      feedback: { count: fbAgg.count, average: fbAgg.count ? +(fbAgg.sum / fbAgg.count).toFixed(2) : 0, hist: fbAgg.hist,
+        recent: feedback.slice(-8).reverse().map(f => ({ rating: f.rating, comment: f.comment, t: f.t })) } };
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(JSON.stringify(body));
   }
   const a = STATIC[url];
@@ -124,6 +136,14 @@ wss.on('connection', ws => {
       stats.reads++; bump('reads');
       notify(me);
       if (m.box) { send(boxes.get(String(m.box)), { t: 'read', msgId: m.msgId }); boxes.delete(String(m.box)); }
+    } else if (m.t === 'feedback') {
+      const r = Math.round(Number(m.rating));
+      if (!(r >= 1 && r <= 5)) return;
+      const comment = String(m.comment || '').slice(0, 500);
+      feedback.push({ rating: r, comment, t: Date.now() }); // no ID stored
+      if (feedback.length > 500) feedback.shift();
+      fbAgg.count++; fbAgg.sum += r; fbAgg.hist[r - 1]++;
+      send(ws, { t: 'feedback_ok' });
     }
   });
   ws.on('close', () => {
