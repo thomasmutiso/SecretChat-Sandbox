@@ -16,11 +16,11 @@ function bump(kind) {
   const now = Date.now();
   const m = Math.floor(now / 60000);
   let b = minuteBuf[minuteBuf.length - 1];
-  if (!b || b.t !== m) { b = { t: m, msgs: 0, reads: 0 }; minuteBuf.push(b); if (minuteBuf.length > 60) minuteBuf.shift(); }
+  if (!b || b.t !== m) { b = { t: m, msgs: 0, reads: 0, joins: 0 }; minuteBuf.push(b); if (minuteBuf.length > 60) minuteBuf.shift(); }
   b[kind]++;
   const h = Math.floor(now / 3600000);
   let hb = hourBuf[hourBuf.length - 1];
-  if (!hb || hb.t !== h) { hb = { t: h, msgs: 0, reads: 0 }; hourBuf.push(hb); if (hourBuf.length > 48) hourBuf.shift(); }
+  if (!hb || hb.t !== h) { hb = { t: h, msgs: 0, reads: 0, joins: 0 }; hourBuf.push(hb); if (hourBuf.length > 48) hourBuf.shift(); }
   hb[kind]++;
 }
 function onlineCount() { let n = 0; for (const u of users.values()) if (u.ws && u.ws.readyState === 1) n++; return n; }
@@ -114,6 +114,7 @@ wss.on('connection', ws => {
       if (changed) save();
       for (const f of held.get(id) || []) send(ws, f);
       { const o = onlineCount(); if (o > stats.peakOnline) stats.peakOnline = o; }
+      bump('joins'); // sign-in over time
     } else if (!me) {
       return send(ws, { t: 'err', reason: 'not authenticated' });
     } else if (m.t === 'getpub') {
