@@ -27,6 +27,7 @@ h2{font-size:16px;margin:18px 0 10px}
 .err{color:#F0B254}
 @media(max-width:680px){.tiles{grid-template-columns:repeat(2,1fr)}}
 svg text{fill:var(--mut);font-size:10px}
+.rbtn.on{background:var(--acc);color:var(--accink);border-color:var(--acc)}
 </style>
 </head>
 <body>
@@ -56,10 +57,22 @@ svg text{fill:var(--mut);font-size:10px}
       <div class="tile"><div class="n" id="t_conns">—</div><div class="l">Connections</div></div>
       <div class="tile"><div class="n" id="t_up">—</div><div class="l">Uptime</div></div>
     </div>
-    <h2>Messages per minute <span class="mut">· last 30 min</span></h2>
-    <div class="card"><svg id="chart" width="100%" height="190" viewBox="0 0 800 190" preserveAspectRatio="none" role="img" aria-label="Messages per minute, last 30 minutes"></svg>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 10px">
+      <h2 id="charttitle" style="margin:0">Messages <span class="mut">· last 30 min</span></h2>
+      <div><button class="g rbtn" id="r30" style="padding:7px 12px">30 min</button> <button class="g rbtn" id="r24" style="padding:7px 12px">24 h</button></div>
+    </div>
+    <div class="card"><div id="chartlegend" class="mut" style="margin-bottom:8px"></div><svg id="chart" width="100%" height="190" viewBox="0 0 800 190" preserveAspectRatio="none" role="img" aria-label="Messages and sign-ins over time"></svg>
       <div id="chartmut" class="mut" style="margin-top:8px"></div></div>
-    <div class="mut" style="margin-top:16px">Privacy: this dashboard shows only counts and timings. It never shows message content, who messaged whom, or any user's ID.</div>
+    <h2>User feedback <span class="mut">· anonymous</span></h2>
+    <div class="card">
+      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:10px">
+        <div class="n" id="f_avg" style="font-size:28px;font-weight:800">—</div>
+        <div class="mut"><span id="f_count">0</span> ratings</div>
+      </div>
+      <div id="f_hist"></div>
+      <div id="f_recent" style="margin-top:12px"></div>
+    </div>
+    <div class="mut" style="margin-top:16px">Privacy: this dashboard shows only counts and timings. It never shows message content, who messaged whom, or any user's ID. Feedback is anonymous.</div>
   </div>
 </div>
 
@@ -82,28 +95,58 @@ function render(d){
   $('t_peak').textContent=d.peakOnline;$('t_msgs').textContent=d.messagesRelayed;$('t_reads').textContent=d.reads;
   $('t_conns').textContent=d.totalConnections;$('t_up').textContent=fmtUp(d.uptimeSec);
   $('updated').textContent='updated '+new Date().toLocaleTimeString();
-  drawChart(d.series||[]);
+  last=d;
+  drawActive();
+  renderFeedback(d.feedback||{count:0,average:0,hist:[0,0,0,0,0],recent:[]});
 }
-function drawChart(series){
+let last=null, chartRange='30m';
+function drawActive(){
+  if(!last)return;
+  if(chartRange==='24h') drawSeries(last.seriesHour||[],24,3600000,'24 h ago','hour','last 24 hours');
+  else drawSeries(last.series||[],30,60000,'30 min ago','min','last 30 minutes');
+  $('charttitle').innerHTML='Messages <span class="mut">· '+(chartRange==='24h'?'last 24 h':'last 30 min')+'</span>';
+  $('r30').classList.toggle('on',chartRange==='30m');
+  $('r24').classList.toggle('on',chartRange==='24h');
+}
+function renderFeedback(f){
+  $('f_avg').textContent=f.count?f.average+' ★':'—';
+  $('f_count').textContent=f.count;
+  const max=Math.max(1,...(f.hist||[]));
+  let h='';
+  for(let i=5;i>=1;i--){const c=(f.hist||[])[i-1]||0;const w=Math.round(100*c/max);
+    h+='<div style="display:flex;align-items:center;gap:8px;margin:3px 0"><span class="mut" style="width:28px">'+i+'★</span>'
+     +'<div style="flex:1;background:var(--surf);border:1px solid var(--bd);border-radius:6px;overflow:hidden"><div style="height:12px;width:'+w+'%;background:var(--acc)"></div></div>'
+     +'<span class="mut" style="width:28px;text-align:right">'+c+'</span></div>';}
+  $('f_hist').innerHTML=h;
+  const rc=f.recent||[];
+  $('f_recent').innerHTML=rc.length?('<div class="mut" style="margin-bottom:6px">Recent comments</div>'+rc.map(x=>{
+    const stars='★'.repeat(x.rating)+'☆'.repeat(5-x.rating);
+    const when=new Date(x.t).toLocaleString();
+    const txt=x.comment?escapeHtml(x.comment):'<span class="mut">(no comment)</span>';
+    return '<div style="border-top:1px solid var(--bd);padding:8px 0"><span style="color:var(--acc)">'+stars+'</span> <span class="mut" style="font-size:12px">'+when+'</span><div>'+txt+'</div></div>';
+  }).join('')):'<div class="mut">No feedback yet.</div>';
+}
+function escapeHtml(x){return String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function drawSeries(series,buckets,unitMs,leftLabel,unitShort,rangeText){
   const W=800,H=190,pad={l:30,r:10,t:12,b:22};
-  const now=Math.floor(Date.now()/60000);
-  const data=[];for(let i=29;i>=0;i--){const t=now-i;const f=series.find(s=>s.t===t);data.push({t,v:f?f.msgs:0});}
-  const max=Math.max(1,...data.map(d=>d.v));
+  const MSG='var(--acc)', JOIN='#2DD4BF';
+  const nowB=Math.floor(Date.now()/unitMs);
+  const data=[];for(let i=buckets-1;i>=0;i--){const t=nowB-i;const f=(series||[]).find(s=>s.t===t);data.push({t,msg:f?f.msgs:0,join:f?(f.joins||0):0});}
+  const max=Math.max(1,...data.map(d=>Math.max(d.msg,d.join)));
   const x=i=>pad.l+(W-pad.l-pad.r)*(i/(data.length-1));
   const y=v=>H-pad.b-(H-pad.t-pad.b)*(v/max);
   let g='';
-  // recessive gridlines + y labels at 0 and max
   [0,max].forEach(v=>{g+=`<line x1="${pad.l}" y1="${y(v)}" x2="${W-pad.r}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/><text x="0" y="${y(v)+3}">${v}</text>`;});
-  const line=data.map((d,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(d.v).toFixed(1)}`).join(' ');
-  const area=`M${x(0)},${y(0)} `+data.map((d,i)=>`L${x(i).toFixed(1)},${y(d.v).toFixed(1)}`).join(' ')+` L${x(data.length-1)},${y(0)} Z`;
-  g+=`<path d="${area}" fill="var(--acc)" opacity="0.12"/>`;
-  g+=`<path d="${line}" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-  // end dot
-  const last=data[data.length-1];g+=`<circle cx="${x(data.length-1)}" cy="${y(last.v)}" r="3.5" fill="var(--acc)"/>`;
-  g+=`<text x="${pad.l}" y="${H-6}">30 min ago</text><text x="${W-pad.r}" y="${H-6}" text-anchor="end">now</text>`;
+  const path=(key,col)=>{const d=data.map((p,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(' ');
+    const lp=data[data.length-1];
+    return `<path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${x(data.length-1)}" cy="${y(lp[key])}" r="3.5" fill="${col}"/>`;};
+  g+=path('msg',MSG);
+  g+=path('join',JOIN);
+  g+=`<text x="${pad.l}" y="${H-6}">${leftLabel}</text><text x="${W-pad.r}" y="${H-6}" text-anchor="end">now</text>`;
   $('chart').innerHTML=g;
-  const total=data.reduce((a,b)=>a+b.v,0);
-  $('chartmut').textContent=total+' messages in the last 30 minutes · peak '+max+'/min';
+  $('chartlegend').innerHTML='<span style="color:'+MSG+'">\u25cf</span> Messages &nbsp;&nbsp; <span style="color:'+JOIN+'">\u25cf</span> Sign-ins';
+  const tm=data.reduce((a,b)=>a+b.msg,0), tj=data.reduce((a,b)=>a+b.join,0);
+  $('chartmut').textContent=tm+' messages \u00b7 '+tj+' sign-ins in the '+rangeText+' \u00b7 peak '+max+'/'+unitShort;
 }
 async function start(){
   try{
@@ -118,6 +161,8 @@ $('go').onclick=()=>{key=$('key').value.trim();if(!key)return $('gerr').textCont
 $('key').onkeydown=e=>{if(e.key==='Enter')$('go').click();};
 function signOut(){clearInterval(timer);try{localStorage.removeItem('sc_admin_key')}catch(e){}key='';$('dash').classList.add('hide');$('gate').classList.remove('hide');$('key').value='';}
 $('signout').onclick=signOut;
+$('r30').onclick=()=>{chartRange='30m';drawActive();};
+$('r24').onclick=()=>{chartRange='24h';drawActive();};
 if(key)start(); // auto-enter if a key is remembered
 </script>
 </body>
