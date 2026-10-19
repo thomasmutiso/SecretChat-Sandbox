@@ -1,8 +1,10 @@
-// SecretChat sandbox server: the verified vanish relay + serves the web client from the same origin.
+// SafeChat sandbox server: the verified vanish relay + serves the web client from the same origin.
 // Friends open https://<your-host>/ , pick an ID, and message. The relay only ever sees sealed ciphertext.
 const fs = require('fs'), http = require('http'), https = require('https'), crypto = require('crypto'), path = require('path');
 const { WebSocketServer } = require('ws');
 const PORT = process.env.PORT || 8080, PERSIST = process.env.PERSIST_FILE, MAX_HELD = 1000;
+const SERVICE_ID = process.env.SERVICE_ID || 'counsellor';   // the reserved counselling-inbox identity
+const COUNSELLOR_KEY = process.env.COUNSELLOR_KEY || '';      // passcode required to BE the counselling inbox
 
 const APP = fs.readFileSync(path.join(__dirname, 'public', 'index.html'));       // the chat app
 const LANDING = fs.readFileSync(path.join(__dirname, 'public', 'landing.html'));  // the marketing page
@@ -106,6 +108,10 @@ wss.on('connection', ws => {
     } else if (m.t === 'hello') {
       const id = String(m.id || '').slice(0, 32), tok = String(m.token || '');
       if (!id || tok.length < 12) { send(ws, { t: 'err', reason: 'ID and a token of 12+ chars required' }); return ws.close(); }
+      // Only someone with the counsellor passcode may claim the counselling inbox identity.
+      if (id === SERVICE_ID && (!COUNSELLOR_KEY || m.counsellorKey !== COUNSELLOR_KEY)) {
+        send(ws, { t: 'err', reason: 'counsellor sign-in required' }); return ws.close();
+      }
       const u = users.get(id);
       if (u && u.th !== sha(tok)) { send(ws, { t: 'err', reason: 'ID already claimed with a different token' }); return ws.close(); }
       me = id;
@@ -121,6 +127,8 @@ wss.on('connection', ws => {
       const u = users.get(m.id);
       send(ws, { t: 'pub', id: m.id, pub: u ? u.pub : null });
     } else if (m.t === 'send') {
+      // Students may only reach the counselling service; the counsellor may reply to anyone.
+      if (me !== SERVICE_ID && m.to !== SERVICE_ID) { return send(ws, { t: 'err', reason: 'students can only message the counselling service' }); }
       const q = held.get(m.to) || [];
       if (q.length >= MAX_HELD) return send(ws, { t: 'err', reason: 'recipient mailbox full' });
       const frame = { t: 'msg', msgId: m.msgId, eph: m.eph, ct: m.ct }; // sealed sender: no 'from'
@@ -153,4 +161,4 @@ wss.on('connection', ws => {
     if (me && users.get(me)?.ws === ws) users.get(me).ws = null;
   });
 });
-srv.listen(PORT, () => console.log(`SecretChat sandbox on ${process.env.TLS_CERT ? 'https' : 'http'}://0.0.0.0:${PORT}`));
+srv.listen(PORT, () => console.log(`SafeChat sandbox on ${process.env.TLS_CERT ? 'https' : 'http'}://0.0.0.0:${PORT}`));
