@@ -45,12 +45,21 @@ a{color:var(--acc)}
 
   <!-- Setup -->
   <div id="setup">
-    <div class="mut">Pick a name friends will send to. Share it with them. It's claimed on this device.</div>
-    <label>Your ID</label>
+    <div class="mut">Reach the university counselling service privately. Your messages are encrypted and vanish once read.</div>
+    <label>Your name or nickname</label>
     <input id="me" placeholder="e.g. amani" autocapitalize="off" autocorrect="off">
-    <button id="join">Join SafeChat</button>
+    <button id="join">Start</button>
     <div class="status" id="s1"></div>
-    <div class="mut" style="margin-top:18px">This is a test build. Messages are end-to-end encrypted and erased once read, but don't rely on it for anything serious yet.</div>
+    <div style="margin-top:20px;border-top:1px solid var(--line);padding-top:14px">
+      <div class="row"><div class="mut">Are you a counsellor?</div><button class="g" style="width:auto;padding:9px 14px;margin:0" id="showc">Counsellor sign-in</button></div>
+      <div id="cbox" class="hide" style="margin-top:12px">
+        <label>Counsellor passcode</label>
+        <input id="ckey" type="password" placeholder="passcode" autocapitalize="off" autocorrect="off">
+        <button id="cjoin">Sign in as counsellor</button>
+        <div class="status" id="s1c"></div>
+      </div>
+    </div>
+    <div class="mut" style="margin-top:18px">Test build — encrypted and erased once read, but don't rely on it for anything serious yet.</div>
   </div>
 
   <!-- Main -->
@@ -60,23 +69,28 @@ a{color:var(--acc)}
       <button class="g" style="width:auto;padding:9px 14px;margin:0" id="leave">Leave</button>
     </div>
 
-    <h2>New message</h2>
-    <label>Send to (their ID)</label>
-    <input id="to" placeholder="their ID" autocapitalize="off" autocorrect="off">
+    <h2 id="nmh">New message</h2>
+    <div id="torow">
+      <label>Reply to (student's ID)</label>
+      <input id="to" placeholder="student's ID" autocapitalize="off" autocorrect="off">
+    </div>
     <label>Message</label>
     <textarea id="txt" placeholder="Type something…"></textarea>
     <button id="send">Send sealed</button>
-    <div class="mut">Your name is sealed inside the message. The relay can't see who sent it.</div>
+    <div class="mut" id="sendnote">Your name is sealed inside the message. The relay can't see who sent it.</div>
     <div id="sent"></div>
 
     <h2>Inbox</h2>
     <div id="inbox"><div class="mut">No messages waiting.</div></div>
     <div class="status" id="s2"></div>
 
+    <div id="keptSection">
     <h2>Kept messages</h2>
     <div class="mut" style="margin-bottom:8px">Kept only on this device. The sender still sees the message as read and vanished.</div>
     <div id="kept"><div class="mut">Nothing kept.</div></div>
+    </div>
 
+    <div id="auditSection">
     <h2>Audit logging <span class="mut" style="font-weight:400;font-size:13px">· counsellor only</span></h2>
     <div class="card">
       <div class="mut">Records de-identified audit rows to a Google Sheet: date, category, risk and a case code — never a name or a message. Settings live only on this device; students never see them.</div>
@@ -86,6 +100,7 @@ a{color:var(--acc)}
       <input id="asec" placeholder="the secret set in the script" autocapitalize="off" autocorrect="off">
       <button id="asave">Save audit settings</button>
       <div id="amsg" class="mut" style="margin-top:8px"></div>
+    </div>
     </div>
 
     <h2>Rate SafeChat</h2>
@@ -114,6 +129,8 @@ $('relayline').innerHTML='Relay: <code>'+RELAY+'</code>';
 
 let ws,kp,myPub,myId,token,inbox=[],sent=[],kept=[],pubCache={},pubWaiters={},backoff=1;
 let auditUrl='',auditSecret='';
+const SERVICE_ID='counsellor';          // the reserved counselling-inbox identity
+let role='student',counsellorKey='',stopReconnect=false;
 const CATS=['Academic / exam stress','Anxiety','Low mood / depression','Relationships','Family','Financial','Grief / bereavement','Adjustment / homesickness','Health / illness','Substance use','Harassment / bullying','Safety / abuse','Career / academic advising','Spiritual / personal','Other'];
 
 function save(){try{localStorage.setItem('sc_id',myId);localStorage.setItem('sc_tok',token)}catch(e){}}
@@ -135,26 +152,60 @@ async function keyFor(id){
   try{const pj=await crypto.subtle.exportKey('jwk',pair.privateKey);localStorage.setItem('sc_key_'+id,JSON.stringify({priv:pj,pub}));}catch(e){}
   return {privateKey:pair.privateKey,pub};
 }
-async function join(id){
-  myId=id.trim(); if(!myId)return $('s1').textContent='Choose an ID first.';
-  const [sid,stok]=load();
-  token=(sid===myId&&stok)?stok:crypto.randomUUID()+crypto.randomUUID();
+function applyRole(){
+  const c=role==='counsellor';
+  $('torow').style.display=c?'':'none';
+  $('keptSection').style.display=c?'':'none';
+  $('auditSection').style.display=c?'':'none';
+  $('nmh').textContent=c?'Reply to a student':'Message the counselling service';
+  $('sendnote').textContent=c
+    ?'The student sees your reply, then it vanishes once they read it.'
+    :'Only the counselling service receives this. It is encrypted and vanishes once read.';
+  $('whoami').textContent=c?'Counselling Service':myId;
+}
+async function enter(){
   const k=await keyFor(myId);
   kp={privateKey:k.privateKey};
   myPub=k.pub;
-  save();
+  stopReconnect=false;
   $('setup').classList.add('hide');$('main').classList.remove('hide');
-  $('whoami').textContent=myId;
   loadKept();renderKept();
   loadAudit();$('aurl').value=auditUrl;$('asec').value=auditSecret;
+  applyRole();
   connect();
+}
+function startStudent(id){
+  const h=(id||'').trim();
+  if(!h)return $('s1').textContent='Enter a name first.';
+  if(h.toLowerCase()===SERVICE_ID)return $('s1').textContent='That name is reserved. Please choose another.';
+  role='student';myId=h;
+  const [sid,stok]=load();
+  token=(sid===myId&&stok)?stok:crypto.randomUUID()+crypto.randomUUID();
+  save();
+  enter();
+}
+function startCounsellor(key){
+  const ck=(key||'').trim();
+  if(!ck)return $('s1c').textContent='Enter the counsellor passcode.';
+  role='counsellor';myId=SERVICE_ID;counsellorKey=ck;
+  let t='';try{t=localStorage.getItem('sc_ctok')||''}catch(e){}
+  if(!t){t=crypto.randomUUID()+crypto.randomUUID();try{localStorage.setItem('sc_ctok',t)}catch(e){}}
+  token=t;
+  $('s1c').textContent='Signing in…';
+  enter();
+}
+function authFail(reason){
+  stopReconnect=true;try{ws&&ws.close()}catch(e){}
+  $('main').classList.add('hide');$('setup').classList.remove('hide');$('cbox').classList.remove('hide');
+  role='student';
+  $('s1c').textContent='Sign-in failed — '+reason+'. Check the passcode.';
 }
 function connect(){
   $('conn').textContent='· connecting…';
   ws=new WebSocket(RELAY);
-  ws.onopen=()=>{ws.send(JSON.stringify({t:'hello',id:myId,token,pub:myPub}));backoff=1;$('conn').textContent='· online'};
+  ws.onopen=()=>{ws.send(JSON.stringify({t:'hello',id:myId,token,pub:myPub,counsellorKey:role==='counsellor'?counsellorKey:undefined}));backoff=1;$('conn').textContent='· online'};
   ws.onmessage=e=>onFrame(JSON.parse(e.data));
-  ws.onclose=()=>{$('conn').textContent='· offline, reconnecting';setTimeout(connect,Math.min(backoff*1000,15000));backoff=Math.min(backoff*2,15)};
+  ws.onclose=()=>{if(stopReconnect){$('conn').textContent='· signed out';return;}$('conn').textContent='· offline, reconnecting';setTimeout(connect,Math.min(backoff*1000,15000));backoff=Math.min(backoff*2,15)};
   ws.onerror=()=>{};
 }
 function tx(o){if(ws&&ws.readyState===1){ws.send(JSON.stringify(o));return true}$('s2').textContent='Offline — try again in a moment.';return false}
@@ -164,12 +215,14 @@ function onFrame(m){
   if(m.t==='pub'){const w=pubWaiters[m.id];if(m.pub)pubCache[m.id]=m.pub;if(w){delete pubWaiters[m.id];w(m.pub)}}
   else if(m.t==='msg'){if(!inbox.some(x=>x.msgId===m.msgId)){inbox.push({msgId:m.msgId,eph:m.eph,ct:m.ct});renderInbox()}}
   else if(m.t==='read'){const s=sent.find(x=>x.msgId===m.msgId);if(s){s.state='Read · vanished';renderSent()}}
-  else if(m.t==='err'){$('s2').textContent='Relay: '+m.reason}
+  else if(m.t==='err'){if(/counsellor sign-in/i.test(m.reason||'')){return authFail(m.reason);}$('s2').textContent='Relay: '+m.reason}
   else if(m.t==='feedback_ok'){/* confirmed */}
 }
 
 async function send(){
-  const to=$('to').value.trim(),text=$('txt').value;
+  const to=role==='counsellor'?$('to').value.trim():SERVICE_ID;
+  const text=$('txt').value;
+  if(role==='counsellor'&&!to)return $('s2').textContent='Enter the student’s ID to reply to.';
   if(!to||!text)return;
   const pub=await pubOf(to);
   if(!pub)return $('s2').textContent='Can’t reach "'+to+'" yet — that ID must open SafeChat and join once before messages can be left for it.';
@@ -181,7 +234,7 @@ async function send(){
   const msgId=crypto.randomUUID();
   if(!tx({t:'sub',box}))return;
   if(!tx({t:'send',to,msgId,eph:ephPub,ct:outer}))return;
-  sent.unshift({msgId,state:'Left for '+to+' · waiting in their inbox'});renderSent();
+  sent.unshift({msgId,state:(role==='counsellor'?('Reply to '+to):'Sent to counselling service')+' · waiting'});renderSent();
   $('txt').value='';$('s2').textContent='';
 }
 async function open(m){
@@ -250,9 +303,9 @@ function renderInbox(){
     const c=document.createElement('div');c.className='card';
     if(m.opened){
       c.innerHTML='<div class="mut">From '+escapeHtml(m.from||'')+'</div><div class="bubble">'+escapeHtml(m.plain)+'</div><div class="mut">Erased from the server. Keep it on this device, or let it clear when you leave (or after 45s).</div>';
-      const keepB=document.createElement('button');keepB.textContent='Keep this message';keepB.onclick=()=>keepMsg(m);c.appendChild(keepB);
+      if(role==='counsellor'){const keepB=document.createElement('button');keepB.textContent='Keep this message';keepB.onclick=()=>keepMsg(m);c.appendChild(keepB);}
       const b=document.createElement('button');b.className='g';b.textContent='Delete now';b.onclick=()=>wipe(m);c.appendChild(b);
-      if(auditOn()){
+      if(role==='counsellor'&&auditOn()){
         if(m.logged){
           const done=document.createElement('div');done.className='mut';done.style.marginTop='10px';
           done.innerHTML='<span class="ok">✓ Logged for audit — '+escapeHtml(m.category)+' · '+escapeHtml(m.risk)+'</span>'+(m.risk==='High'?'<div class="warn" style="margin-top:4px">High risk — follow your escalation protocol.</div>':'');
@@ -282,8 +335,11 @@ function renderSent(){
 }
 function escapeHtml(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
-$('join').onclick=()=>join($('me').value);
-$('me').onkeydown=e=>{if(e.key==='Enter')join($('me').value)};
+$('join').onclick=()=>startStudent($('me').value);
+$('me').onkeydown=e=>{if(e.key==='Enter')startStudent($('me').value)};
+$('showc').onclick=()=>$('cbox').classList.toggle('hide');
+$('cjoin').onclick=()=>startCounsellor($('ckey').value);
+$('ckey').onkeydown=e=>{if(e.key==='Enter')startCounsellor($('ckey').value)};
 $('send').onclick=send;
 $('leave').onclick=()=>{try{ws&&ws.close()}catch(e){}inbox=[];sent=[];location.reload()};
 document.addEventListener('visibilitychange',()=>{if(document.hidden)wipeAllOpened();});
