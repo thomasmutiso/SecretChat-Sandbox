@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>SecretChat</title>
+<title>SafeChat</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#0C2418">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="SecretChat">
+<meta name="apple-mobile-web-app-title" content="SafeChat">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="icon" href="/icon-192.png">
 <style>
@@ -39,7 +39,7 @@ a{color:var(--acc)}
 </head>
 <body>
 <div class="wrap">
-  <div class="brand"><svg class="leaf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--acc)"><path d="M11 20A7 7 0 0 1 4 13C4 8 8 4 18 4c0 10-4 14-9 14z"/><path d="M4 20c2-4 5-7 10-9"/></svg><span>Secret<span class="c">Chat</span></span></div>
+  <div class="brand"><svg class="leaf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--acc)"><path d="M11 20A7 7 0 0 1 4 13C4 8 8 4 18 4c0 10-4 14-9 14z"/><path d="M4 20c2-4 5-7 10-9"/></svg><span>Safe<span class="c">Chat</span></span></div>
   <div class="tag">Messages vanish. Privacy stays.</div>
 
   <!-- Setup -->
@@ -47,7 +47,7 @@ a{color:var(--acc)}
     <div class="mut">Pick a name friends will send to. Share it with them. It's claimed on this device.</div>
     <label>Your ID</label>
     <input id="me" placeholder="e.g. amani" autocapitalize="off" autocorrect="off">
-    <button id="join">Join SecretChat</button>
+    <button id="join">Join SafeChat</button>
     <div class="status" id="s1"></div>
     <div class="mut" style="margin-top:18px">This is a test build. Messages are end-to-end encrypted and erased once read, but don't rely on it for anything serious yet.</div>
   </div>
@@ -71,6 +71,15 @@ a{color:var(--acc)}
     <h2>Inbox</h2>
     <div id="inbox"><div class="mut">No messages waiting.</div></div>
     <div class="status" id="s2"></div>
+
+    <h2>Rate SafeChat</h2>
+    <div class="card">
+      <div class="mut">Anonymous — your rating isn't linked to your ID.</div>
+      <div id="stars" style="font-size:30px;letter-spacing:6px;margin:10px 0;cursor:pointer;user-select:none"></div>
+      <textarea id="fb" placeholder="Anything we could do better? (optional)"></textarea>
+      <button id="fbsend">Send feedback</button>
+      <div id="fbmsg" class="mut" style="margin-top:8px"></div>
+    </div>
   </div>
 
   <div class="mut" style="margin-top:22px;text-align:center" id="relayline"></div>
@@ -120,6 +129,7 @@ function onFrame(m){
   else if(m.t==='msg'){if(!inbox.some(x=>x.msgId===m.msgId)){inbox.push({msgId:m.msgId,eph:m.eph,ct:m.ct});renderInbox()}}
   else if(m.t==='read'){const s=sent.find(x=>x.msgId===m.msgId);if(s){s.state='Read · vanished';renderSent()}}
   else if(m.t==='err'){$('s2').textContent='Relay: '+m.reason}
+  else if(m.t==='feedback_ok'){/* confirmed */}
 }
 
 async function send(){
@@ -187,13 +197,23 @@ $('send').onclick=send;
 $('leave').onclick=()=>{try{ws&&ws.close()}catch(e){}inbox=[];sent=[];location.reload()};
 document.addEventListener('visibilitychange',()=>{if(document.hidden)wipeAllOpened();});
 window.addEventListener('pagehide',wipeAllOpened);
+
+let fbRating=0;
+function drawStars(){const el=$('stars');if(!el)return;el.innerHTML='';for(let i=1;i<=5;i++){const sp=document.createElement('span');sp.textContent=i<=fbRating?'\u2605':'\u2606';sp.style.color=i<=fbRating?'var(--acc)':'var(--mut)';sp.onclick=()=>{fbRating=i;drawStars();};el.appendChild(sp);}}
+drawStars();
+$('fbsend').onclick=()=>{
+  if(!fbRating)return $('fbmsg').textContent='Tap a star to rate first.';
+  if(!tx({t:'feedback',rating:fbRating,comment:$('fb').value.slice(0,500)}))return;
+  $('fbmsg').textContent='Thanks — your feedback was sent.';
+  fbRating=0;drawStars();$('fb').value='';
+};
 const [sid]=load();if(sid)$('me').value=sid;
 </script>
   <div id="a2hs" style="display:none;position:fixed;left:14px;right:14px;bottom:14px;max-width:440px;margin:0 auto;background:var(--surf);border:1px solid var(--bd);border-radius:16px;padding:13px 14px;align-items:center;gap:12px;box-shadow:0 12px 34px rgba(0,0,0,.45);z-index:50">
     <div style="width:38px;height:38px;border-radius:11px;background:var(--soft);display:flex;align-items:center;justify-content:center;flex:none">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--acc)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 4 13C4 8 8 4 18 4c0 10-4 14-9 14z"/><path d="M4 20c2-4 5-7 10-9"/></svg>
     </div>
-    <div style="flex:1;min-width:0"><b>Add SecretChat to your home screen</b><div class="mut" id="a2hstext" style="margin-top:2px"></div></div>
+    <div style="flex:1;min-width:0"><b>Add SafeChat to your home screen</b><div class="mut" id="a2hstext" style="margin-top:2px"></div></div>
     <button id="a2hsbtn" style="display:none;width:auto;margin:0;padding:10px 16px;border-radius:11px;background:var(--acc);color:var(--accink);font-weight:700">Install</button>
     <button id="a2hsx" aria-label="Dismiss" style="width:auto;margin:0;padding:0 6px;background:none;color:var(--mut);font-size:22px;line-height:1">&times;</button>
   </div>

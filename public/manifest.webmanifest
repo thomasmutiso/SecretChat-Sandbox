@@ -1,6 +1,6 @@
 {
-  "name": "SecretChat",
-  "short_name": "SecretChat",
+  "name": "SafeChat",
+  "short_name": "SafeChat",
   "description": "Messages vanish. Privacy stays.",
   "start_url": "/",
   "scope": "/",
