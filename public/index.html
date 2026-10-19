@@ -72,6 +72,10 @@ a{color:var(--acc)}
     <div id="inbox"><div class="mut">No messages waiting.</div></div>
     <div class="status" id="s2"></div>
 
+    <h2>Kept messages</h2>
+    <div class="mut" style="margin-bottom:8px">Kept only on this device. The sender still sees the message as read and vanished.</div>
+    <div id="kept"><div class="mut">Nothing kept.</div></div>
+
     <h2>Rate SafeChat</h2>
     <div class="card">
       <div class="mut">Anonymous — your rating isn't linked to your ID.</div>
@@ -96,21 +100,38 @@ async function unseal(k,s){const b=unb64(s);return new Uint8Array(await crypto.s
 const RELAY=(location.protocol==='https:'?'wss://':'ws://')+location.host;
 $('relayline').innerHTML='Relay: <code>'+RELAY+'</code>';
 
-let ws,kp,myPub,myId,token,inbox=[],sent=[],pubCache={},pubWaiters={},backoff=1;
+let ws,kp,myPub,myId,token,inbox=[],sent=[],kept=[],pubCache={},pubWaiters={},backoff=1;
 
 function save(){try{localStorage.setItem('sc_id',myId);localStorage.setItem('sc_tok',token)}catch(e){}}
 function load(){try{return[localStorage.getItem('sc_id'),localStorage.getItem('sc_tok')]}catch(e){return[null,null]}}
 
+async function keyFor(id){
+  // A stable identity key per ID, kept on this device, so a message left while you were
+  // offline still decrypts when you log back in. This is what makes store-and-forward work:
+  // a student can leave a note for the counsellor, who reads it next time they sign in.
+  try{
+    const s=localStorage.getItem('sc_key_'+id);
+    if(s){const o=JSON.parse(s);
+      const priv=await crypto.subtle.importKey('jwk',o.priv,{name:'ECDH',namedCurve:'P-256'},true,['deriveKey']);
+      return {privateKey:priv,pub:o.pub};
+    }
+  }catch(e){}
+  const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveKey']);
+  const pub=b64(await crypto.subtle.exportKey('raw',pair.publicKey));
+  try{const pj=await crypto.subtle.exportKey('jwk',pair.privateKey);localStorage.setItem('sc_key_'+id,JSON.stringify({priv:pj,pub}));}catch(e){}
+  return {privateKey:pair.privateKey,pub};
+}
 async function join(id){
   myId=id.trim(); if(!myId)return $('s1').textContent='Choose an ID first.';
   const [sid,stok]=load();
   token=(sid===myId&&stok)?stok:crypto.randomUUID()+crypto.randomUUID();
-  kp=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveKey']);
-  // a fresh key each session is fine for a sandbox; held messages are re-fetched live
-  myPub=b64(await crypto.subtle.exportKey('raw',kp.publicKey));
+  const k=await keyFor(myId);
+  kp={privateKey:k.privateKey};
+  myPub=k.pub;
   save();
   $('setup').classList.add('hide');$('main').classList.remove('hide');
   $('whoami').textContent=myId;
+  loadKept();renderKept();
   connect();
 }
 function connect(){
@@ -136,7 +157,7 @@ async function send(){
   const to=$('to').value.trim(),text=$('txt').value;
   if(!to||!text)return;
   const pub=await pubOf(to);
-  if(!pub)return $('s2').textContent=to+' has not joined yet (they must open the link and join with that ID).';
+  if(!pub)return $('s2').textContent='Can’t reach "'+to+'" yet — that ID must open SafeChat and join once before messages can be left for it.';
   const inner=await seal(await dh(kp.privateKey,pub),enc.encode(text));
   const eph=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveKey']);
   const ephPub=b64(await crypto.subtle.exportKey('raw',eph.publicKey));
@@ -145,7 +166,7 @@ async function send(){
   const msgId=crypto.randomUUID();
   if(!tx({t:'sub',box}))return;
   if(!tx({t:'send',to,msgId,eph:ephPub,ct:outer}))return;
-  sent.unshift({msgId,state:'Sent to '+to+' · waiting'});renderSent();
+  sent.unshift({msgId,state:'Left for '+to+' · waiting in their inbox'});renderSent();
   $('txt').value='';$('s2').textContent='';
 }
 async function open(m){
@@ -166,6 +187,28 @@ function wipe(m){
   inbox=inbox.filter(x=>x!==m);renderInbox();
 }
 function wipeAllOpened(){inbox.filter(m=>m.opened).slice().forEach(wipe);} // clear on exit
+function keptKey(){return 'sc_kept_'+myId;}
+function loadKept(){try{kept=JSON.parse(localStorage.getItem(keptKey())||'[]');if(!Array.isArray(kept))kept=[];}catch(e){kept=[];}}
+function saveKept(){try{localStorage.setItem(keptKey(),JSON.stringify(kept));}catch(e){}}
+function keepMsg(m){
+  if(m.plain==null)return;
+  kept.unshift({from:m.from||'',text:m.plain,t:Date.now()});
+  if(kept.length>500)kept.pop();
+  saveKept();renderKept();
+  wipe(m); // remove from the live inbox; the kept copy stays
+}
+function deleteKept(i){kept.splice(i,1);saveKept();renderKept();}
+function renderKept(){
+  const el=$('kept');if(!el)return;
+  if(!kept.length){el.innerHTML='<div class="mut">Nothing kept.</div>';return;}
+  el.innerHTML='';
+  kept.forEach((k,i)=>{
+    const c=document.createElement('div');c.className='card';
+    c.innerHTML='<div class="mut">From '+escapeHtml(k.from)+' · '+escapeHtml(new Date(k.t).toLocaleString())+'</div><div class="bubble">'+escapeHtml(k.text)+'</div>';
+    const b=document.createElement('button');b.className='g';b.textContent='Delete';b.onclick=()=>deleteKept(i);c.appendChild(b);
+    el.appendChild(c);
+  });
+}
 function renderInbox(){
   const el=$('inbox');
   if(!inbox.length){el.innerHTML='<div class="mut">No messages waiting.</div>';return}
@@ -173,8 +216,9 @@ function renderInbox(){
   inbox.forEach(m=>{
     const c=document.createElement('div');c.className='card';
     if(m.opened){
-      c.innerHTML='<div class="mut">From '+(m.from||'')+'</div><div class="bubble">'+escapeHtml(m.plain)+'</div><div class="mut">Already erased from the server. Clears here when you leave, or after 45s.</div>';
-      const b=document.createElement('button');b.textContent='Delete now';b.onclick=()=>wipe(m);c.appendChild(b);
+      c.innerHTML='<div class="mut">From '+escapeHtml(m.from||'')+'</div><div class="bubble">'+escapeHtml(m.plain)+'</div><div class="mut">Erased from the server. Keep it on this device, or let it clear when you leave (or after 45s).</div>';
+      const keepB=document.createElement('button');keepB.textContent='Keep this message';keepB.onclick=()=>keepMsg(m);c.appendChild(keepB);
+      const b=document.createElement('button');b.className='g';b.textContent='Delete now';b.onclick=()=>wipe(m);c.appendChild(b);
     }else if(m.plain!=null){
       c.innerHTML='<div class="bubble">'+escapeHtml(m.plain)+'</div>';
       const b=document.createElement('button');b.className='soft';b.textContent='Try again';b.style.marginTop='10px';b.onclick=()=>open(m);c.appendChild(b);
