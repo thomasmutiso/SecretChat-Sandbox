@@ -276,11 +276,11 @@ async function caseCodeFor(handle){
   const h=new Uint8Array(await crypto.subtle.digest('SHA-256',data));
   return [...h.slice(0,3)].map(b=>b.toString(16).padStart(2,'0')).join('');
 }
-async function logCase(m,category,risk){
+async function logCase(m,category,risk,outcome){
   if(!auditOn())return false;
-  const payload={secret:auditSecret,date:new Date().toISOString().slice(0,10),category,risk,caseCode:await caseCodeFor(m.from||''),counsellor:myId};
+  const payload={secret:auditSecret,date:new Date().toISOString().slice(0,10),category,risk,outcome,caseCode:await caseCodeFor(m.from||''),counsellor:myId};
   try{await fetch(auditUrl,{method:'POST',mode:'no-cors',body:JSON.stringify(payload)});}catch(e){}
-  m.logged=true;m.category=category;m.risk=risk; // no-cors is opaque, so treat a sent request as logged
+  m.logged=true;m.category=category;m.risk=risk;m.outcome=outcome; // no-cors is opaque, so treat a sent request as logged
   return true;
 }
 function renderKept(){
@@ -308,15 +308,16 @@ function renderInbox(){
       if(role==='counsellor'&&auditOn()){
         if(m.logged){
           const done=document.createElement('div');done.className='mut';done.style.marginTop='10px';
-          done.innerHTML='<span class="ok">✓ Logged for audit — '+escapeHtml(m.category)+' · '+escapeHtml(m.risk)+'</span>'+(m.risk==='High'?'<div class="warn" style="margin-top:4px">High risk — follow your escalation protocol.</div>':'');
+          done.innerHTML='<span class="ok">✓ Logged for audit — '+escapeHtml(m.category)+' · '+escapeHtml(m.risk)+' · '+escapeHtml(m.outcome||'')+'</span>'+(m.risk==='High'?'<div class="warn" style="margin-top:4px">High risk — follow your escalation protocol.</div>':'');
           c.appendChild(done);
         }else{
           const cs=document.createElement('select');CATS.forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=x;cs.appendChild(o);});
           const rs=document.createElement('select');['Low','Medium','High'].forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent='Risk: '+x;rs.appendChild(o);});
+          const os=document.createElement('select');['Supported','Referred','Escalated','Follow-up booked'].forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent='Outcome: '+x;os.appendChild(o);});
           const lb=document.createElement('button');lb.className='soft';lb.textContent='Log for audit';lb.style.marginTop='8px';
-          lb.onclick=async()=>{lb.disabled=true;lb.textContent='Logging…';await logCase(m,cs.value,rs.value);renderInbox();};
-          const hint=document.createElement('div');hint.className='mut';hint.style.marginTop='6px';hint.textContent='Records only the category, risk, a case code and the date. No name, no message.';
-          c.appendChild(cs);c.appendChild(rs);c.appendChild(lb);c.appendChild(hint);
+          lb.onclick=async()=>{lb.disabled=true;lb.textContent='Logging…';await logCase(m,cs.value,rs.value,os.value);renderInbox();};
+          const hint=document.createElement('div');hint.className='mut';hint.style.marginTop='6px';hint.textContent='Records only the category, risk, outcome, a case code and the date. No name, no message.';
+          c.appendChild(cs);c.appendChild(rs);c.appendChild(os);c.appendChild(lb);c.appendChild(hint);
         }
       }
     }else if(m.plain!=null){
