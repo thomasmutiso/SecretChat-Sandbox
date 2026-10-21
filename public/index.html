@@ -55,6 +55,8 @@ a{color:var(--acc)}
       <div id="cbox" class="hide" style="margin-top:12px">
         <label>Counsellor passcode</label>
         <input id="ckey" type="password" placeholder="passcode" autocapitalize="off" autocorrect="off">
+        <label>Service key <span class="mut" style="font-weight:400">· first time on this device only</span></label>
+        <textarea id="svckey" placeholder="Paste the service key once to set up this device. Leave blank if already set up here." style="min-height:72px"></textarea>
         <button id="cjoin">Sign in as counsellor</button>
         <div class="status" id="s1c"></div>
       </div>
@@ -130,6 +132,8 @@ $('relayline').innerHTML='Relay: <code>'+RELAY+'</code>';
 let ws,kp,myPub,myId,token,inbox=[],sent=[],kept=[],pubCache={},pubWaiters={},backoff=1;
 let auditUrl='',auditSecret='';
 const SERVICE_ID='counsellor';          // the reserved counselling-inbox identity
+const SERVICE_PUB='BD+uJB1c6gJmF0mHDvC1CFQUhASpBPU5e7g7iC4ftlWiSU92VogrVm41QxukjSUanptCbaK8yRgAyx4ygjbSELI='; // the inbox's fixed public key — students always encrypt to this, online or not
+function loadServicePriv(){try{const s=localStorage.getItem('sc_service_priv');return s?JSON.parse(s):null;}catch(e){return null;}}
 let role='student',counsellorKey='',stopReconnect=false;
 const CATS=['Academic / exam stress','Anxiety','Low mood / depression','Relationships','Family','Financial','Grief / bereavement','Adjustment / homesickness','Health / illness','Substance use','Harassment / bullying','Safety / abuse','Career / academic advising','Spiritual / personal','Other'];
 
@@ -164,9 +168,14 @@ function applyRole(){
   $('whoami').textContent=c?'Counselling Service':myId;
 }
 async function enter(){
-  const k=await keyFor(myId);
-  kp={privateKey:k.privateKey};
-  myPub=k.pub;
+  if(role==='counsellor'){
+    const jwk=loadServicePriv();
+    const priv=await crypto.subtle.importKey('jwk',jwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveKey']);
+    kp={privateKey:priv};myPub=SERVICE_PUB;
+  }else{
+    const k=await keyFor(myId);
+    kp={privateKey:k.privateKey};myPub=k.pub;
+  }
   stopReconnect=false;
   $('setup').classList.add('hide');$('main').classList.remove('hide');
   loadKept();renderKept();
@@ -184,9 +193,16 @@ function startStudent(id){
   save();
   enter();
 }
-function startCounsellor(key){
+function startCounsellor(key,svc){
   const ck=(key||'').trim();
   if(!ck)return $('s1c').textContent='Enter the counsellor passcode.';
+  let stored='';try{stored=localStorage.getItem('sc_service_priv')||''}catch(e){}
+  const pasted=(svc||'').trim();
+  if(pasted){
+    try{const j=JSON.parse(pasted);if(j.kty!=='EC'||!j.d)throw 0;localStorage.setItem('sc_service_priv',JSON.stringify(j));stored=JSON.stringify(j);}
+    catch(e){return $('s1c').textContent='That service key doesn’t look right — paste the exact key you were given.';}
+  }
+  if(!stored)return $('s1c').textContent='First time on this device: paste the service key below to unlock the counselling inbox.';
   role='counsellor';myId=SERVICE_ID;counsellorKey=ck;
   let t='';try{t=localStorage.getItem('sc_ctok')||''}catch(e){}
   if(!t){t=crypto.randomUUID()+crypto.randomUUID();try{localStorage.setItem('sc_ctok',t)}catch(e){}}
@@ -224,13 +240,13 @@ async function send(){
   const text=$('txt').value;
   if(role==='counsellor'&&!to)return $('s2').textContent='Enter the student’s ID to reply to.';
   if(!to||!text)return;
-  const pub=await pubOf(to);
-  if(!pub)return $('s2').textContent='Can’t reach "'+to+'" yet — that ID must open SafeChat and join once before messages can be left for it.';
+  const pub=(to===SERVICE_ID)?SERVICE_PUB:await pubOf(to);
+  if(!pub)return $('s2').textContent='Can’t reach "'+to+'" yet — open their message first so SafeChat has their key.';
   const inner=await seal(await dh(kp.privateKey,pub),enc.encode(text));
   const eph=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveKey']);
   const ephPub=b64(await crypto.subtle.exportKey('raw',eph.publicKey));
   const box=b64(crypto.getRandomValues(new Uint8Array(12)));
-  const outer=await seal(await dh(eph.privateKey,pub),enc.encode(JSON.stringify({from:myId,inner,box})));
+  const outer=await seal(await dh(eph.privateKey,pub),enc.encode(JSON.stringify({from:myId,inner,box,fromPub:myPub})));
   const msgId=crypto.randomUUID();
   if(!tx({t:'sub',box}))return;
   if(!tx({t:'send',to,msgId,eph:ephPub,ct:outer}))return;
@@ -240,7 +256,8 @@ async function send(){
 async function open(m){
   try{
     const o=JSON.parse(decd.decode(await unseal(await dh(kp.privateKey,m.eph),m.ct)));
-    const sp=await pubOf(o.from);
+    const sp=o.fromPub||await pubOf(o.from);
+    if(o.fromPub)pubCache[o.from]=o.fromPub; // remember the sender's key, so a reply needs no server lookup
     const text=decd.decode(await unseal(await dh(kp.privateKey,sp),o.inner));
     m.from=o.from;m.box=o.box;m.plain=text;m.opened=true;
     // Read once: delete the server copy the instant it is opened (and send the read receipt).
@@ -339,8 +356,8 @@ function escapeHtml(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>
 $('join').onclick=()=>startStudent($('me').value);
 $('me').onkeydown=e=>{if(e.key==='Enter')startStudent($('me').value)};
 $('showc').onclick=()=>$('cbox').classList.toggle('hide');
-$('cjoin').onclick=()=>startCounsellor($('ckey').value);
-$('ckey').onkeydown=e=>{if(e.key==='Enter')startCounsellor($('ckey').value)};
+$('cjoin').onclick=()=>startCounsellor($('ckey').value,$('svckey').value);
+$('ckey').onkeydown=e=>{if(e.key==='Enter')startCounsellor($('ckey').value,$('svckey').value)};
 $('send').onclick=send;
 $('leave').onclick=()=>{try{ws&&ws.close()}catch(e){}inbox=[];sent=[];location.reload()};
 document.addEventListener('visibilitychange',()=>{if(document.hidden)wipeAllOpened();});
